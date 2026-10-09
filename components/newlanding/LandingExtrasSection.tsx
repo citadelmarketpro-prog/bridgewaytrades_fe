@@ -1,9 +1,6 @@
-"use client";
-
 import Image from "next/image";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { FadeUp, ZoomIn, Magnetic, TiltCard } from "./motion";
+import { FadeUp, ZoomIn, Magnetic, TiltCard, HoverWiggle, PulseGlow } from "./motion";
 
 const awards = [
   "/sample-landing/best-partners-program-global-2024-min.svg",
@@ -83,7 +80,7 @@ export default function LandingExtrasSection() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-6 items-center">
             {awards.map((src, i) => (
               <ZoomIn key={i} delay={0.06 * i} className="flex justify-center">
-                <motion.div whileHover={{ scale: 1.12, rotate: [0, -3, 3, 0] }} transition={{ duration: 0.4 }}>
+                <HoverWiggle>
                   <Image
                     src={src}
                     alt="Award"
@@ -91,7 +88,7 @@ export default function LandingExtrasSection() {
                     height={110}
                     className="h-20 w-auto object-contain opacity-60 hover:opacity-100 transition-opacity duration-300"
                   />
-                </motion.div>
+                </HoverWiggle>
               </ZoomIn>
             ))}
           </div>
@@ -111,13 +108,7 @@ export default function LandingExtrasSection() {
         <div className="max-w-5xl mx-auto px-6 sm:px-10">
           <FadeUp>
             <div className="relative">
-              <motion.div
-                aria-hidden
-                className="pointer-events-none absolute -inset-6 rounded-[2.5rem] -z-10"
-                style={{ background: "radial-gradient(circle, rgba(0,82,255,0.45) 0%, transparent 70%)" }}
-                animate={{ opacity: [0.4, 0.8, 0.4], scale: [0.96, 1.04, 0.96] }}
-                transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-              />
+              <PulseGlow className="absolute -inset-6 rounded-[2.5rem] -z-10" />
               <div className="relative bg-[#181c25] rounded-3xl p-8 sm:p-12 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-8 border border-blue-500/20">
                 <div>
                   <h2 className="text-3xl sm:text-5xl font-extrabold text-white leading-tight mb-4">

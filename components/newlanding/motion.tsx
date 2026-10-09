@@ -192,6 +192,107 @@ export function TiltCard({ children, className = "" }: { children: ReactNode; cl
   );
 }
 
+/** Scales up and gives a little shake on hover — for small badge/award icons. */
+export function HoverWiggle({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <motion.div
+      whileHover={{ scale: 1.12, rotate: [0, -3, 3, 0] }}
+      transition={{ duration: 0.4 }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/** A soft radial glow that slowly pulses — drop behind a CTA card for ambiance. */
+export function PulseGlow({ className = "", color = "rgba(0,82,255,0.45)" }: { className?: string; color?: string }) {
+  return (
+    <motion.div
+      aria-hidden
+      className={`pointer-events-none ${className}`}
+      style={{ background: `radial-gradient(circle, ${color} 0%, transparent 70%)` }}
+      animate={{ opacity: [0.4, 0.8, 0.4], scale: [0.96, 1.04, 0.96] }}
+      transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
+    />
+  );
+}
+
+/** Continuous gentle vertical float (with optional rotation) — for decorative hero imagery. */
+export function FloatY({ children, className = "", distance = 14, rotate = 0, duration = 5, delay = 0 }: { children: ReactNode; className?: string; distance?: number; rotate?: number; duration?: number; delay?: number }) {
+  return (
+    <motion.div
+      className={className}
+      animate={rotate ? { y: [0, -distance, 0], rotate: [0, rotate, 0] } : { y: [0, -distance, 0] }}
+      transition={{ duration, repeat: Infinity, ease: "easeInOut", delay }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/** Continuous drift + scale breathing loop — for ambient background glow orbs. */
+export function DriftGlow({ className = "", color, x = 30, y = 30, duration = 15, delay = 0 }: { className?: string; color: string; x?: number; y?: number; duration?: number; delay?: number }) {
+  return (
+    <motion.div
+      aria-hidden
+      className={`pointer-events-none ${className}`}
+      style={{ background: `radial-gradient(circle, ${color} 0%, transparent 70%)` }}
+      animate={{ x: [0, x, 0], y: [0, y, 0], scale: [1, 1.12, 1] }}
+      transition={{ duration, repeat: Infinity, ease: "easeInOut", delay }}
+    />
+  );
+}
+
+/** Simple fade+rise entrance with no scroll trigger — animates on mount. */
+export function FadeInNow({ children, className = "", delay = 0, duration = 0.6, y = 16 }: { children: ReactNode; className?: string; delay?: number; duration?: number; y?: number }) {
+  return (
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, y }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration, ease: "easeOut" }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+/** A pill badge that cycles through `items` on a timer with a blur+scale swap transition. */
+export function CyclingBadge({ items, label, intervalMs = 2500 }: { items: string[]; label: string; intervalMs?: number }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [animating, setAnimating] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setAnimating(true);
+      setTimeout(() => {
+        setActiveIndex((prev) => (prev + 1) % items.length);
+        setAnimating(false);
+      }, 400);
+    }, intervalMs);
+    return () => clearInterval(interval);
+  }, [items.length, intervalMs]);
+
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full bg-white/10 backdrop-blur-md border border-white/15 px-4 py-2 text-xs font-medium">
+      <span className="flex h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 animate-pulse" />
+      <span className="text-gray-400 whitespace-nowrap">{label}</span>
+      <span
+        className="inline-block w-[160px]"
+        style={{
+          opacity: animating ? 0 : 1,
+          filter: animating ? "blur(4px)" : "blur(0px)",
+          transform: animating ? "translateY(8px) scale(0.92)" : "translateY(0) scale(1)",
+          transition: "opacity 0.4s, transform 0.4s, filter 0.4s",
+        }}
+      >
+        <span className="font-semibold text-white whitespace-nowrap">{items[activeIndex]}</span>
+      </span>
+    </div>
+  );
+}
+
 /** Pulls the element subtly toward the cursor within its bounds — magnetic buttons. */
 export function Magnetic({ children, className = "", strength = 0.35 }: { children: ReactNode; className?: string; strength?: number }) {
   const x = useMotionValue(0);
