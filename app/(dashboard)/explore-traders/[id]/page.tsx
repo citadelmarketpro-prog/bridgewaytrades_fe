@@ -1,0 +1,947 @@
+"use client";
+
+import React, { useEffect, useState, useMemo, useRef, Suspense } from "react";
+import useSWR, { mutate as globalMutate } from "swr";
+import {
+  ArrowLeft,
+  Info,
+  TrendingUp,
+  TrendingDown,
+  X,
+  Users,
+  Calendar,
+  DollarSign,
+  UserCheck,
+  Shield,
+  Clock,
+  Star,
+  Plus,
+  UserPlus,
+  Loader2,
+  Gauge,
+  Briefcase,
+} from "lucide-react";
+import { toast } from "sonner";
+import Link from "next/link";
+import { useTheme } from "next-themes";
+import Image from "next/image";
+import { useParams, useSearchParams } from "next/navigation";
+import { PulseLoader } from "react-spinners";
+import { apiFetch } from "@/lib/api";
+import { PROFILE_KEY } from "@/lib/swrKeys";
+import TraderPortfolioTab from "@/components/dashboard/TraderPortfolioTab";
+
+interface TraderDetail {
+  id: number;
+  name: string;
+  username: string;
+  avatar_url: string | null;
+  country_flag_url: string | null;
+  badge: string;
+  country: string;
+  gain: string;
+  risk: number;
+  trades: number;
+  copiers: number;
+  avg_trade_time: string;
+  subscribers: number;
+  current_positions: number;
+  min_account_threshold: string;
+  copy_value: string;
+  expert_rating: string;
+  return_ytd: string;
+  return_2y: string;
+  avg_score_7d: string;
+  profitable_weeks: string;
+  avg_profit_percent: string;
+  avg_loss_percent: string;
+  total_wins: number;
+  total_losses: number;
+  win_rate: number;
+  performance_data: Array<{ month: string; value: number }>;
+  monthly_performance: Array<{ month: string; percentage: number }>;
+  frequently_traded: string[];
+  bio: string;
+  followers: number;
+  trend_direction: string;
+  tags: string[];
+  category: string;
+  max_drawdown: string;
+  cumulative_earnings_copiers: string;
+  cumulative_copiers: number;
+  portfolio_breakdown: Array<{ name: string; percentage: number }>;
+  top_traded: Array<{
+    name: string;
+    ticker: string;
+    avg_profit: number;
+    avg_loss: number;
+    profitable_pct: number;
+  }>;
+  profit_share: number;
+  blur_portfolio: boolean;
+  blur_portfolio_amount: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface UserProfile {
+  success: boolean;
+  user: {
+    balance: string;
+    profit: string;
+  };
+}
+
+interface SimilarTrader {
+  id: number;
+  name: string;
+  username: string;
+  avatar_url: string | null;
+  gain: string;
+  copiers: number;
+  risk: number;
+  trend_direction: string;
+  category: string;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Portfolio chart — ported from hagocapitals' /traders/[id] trader detail
+   page (same custom-SVG bezier chart, same time filters and functionality),
+   recolored to BridgewayTrades' brand green. The line shape is a deterministic
+   seeded curve trending with the trader's real direction/earnings (same
+   illustrative approach hagocapitals uses) — only the headline value/ROI
+   above the chart are real numbers, derived from the trader's real fields.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const TIME_FILTERS = ["Week", "1D", "1H", "1W", "1M", "1Y"] as const;
+type TimeFilter = (typeof TIME_FILTERS)[number];
+
+const PERIOD_LABELS: Record<string, string[]> = {
+  "1H": ["5m", "10m", "20m", "30m", "40m", "50m", "1h"],
+  "1D": ["4am", "8am", "12pm", "2pm", "4pm", "6pm", "8pm"],
+  "Week": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  "1W": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  "1M": ["W1", "W2", "W3", "W4"],
+  "1Y": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+};
+
+const PERIOD_DESC: Record<string, string> = {
+  "1H": "Last hour", "1D": "Last 24 hours", "Week": "This week",
+  "1W": "Last 7 days", "1M": "Last 30 days", "1Y": "Last 12 months",
+};
+
+const PERIOD_DIVISOR: Record<string, number> = {
+  "1H": 8760, "1D": 365, "Week": 52, "1W": 52, "1M": 12, "1Y": 1,
+};
+
+const PERIOD_VOLATILITY: Record<string, number> = {
+  "1H": 30, "1D": 22, "Week": 18, "1W": 16, "1M": 12, "1Y": 8,
+};
+
+const PERIOD_POINTS: Record<string, number> = {
+  "1H": 12, "1D": 18, "Week": 7, "1W": 7, "1M": 20, "1Y": 12,
+};
+
+function seededRand(seed: number) {
+  let s = seed | 1;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
+function generateChartPath(
+  period: string,
+  seed: number,
+  direction: "upward" | "downward" = "upward"
+): { stroke: string; fill: string } {
+  const n = PERIOD_POINTS[period] ?? 12;
+  const vol = PERIOD_VOLATILITY[period] ?? 15;
+  const rand = seededRand(seed ^ (period.charCodeAt(0) * 997));
+
+  const W = 580;
+  const yStart = direction === "downward" ? 12 : 165;
+  const yEnd = direction === "downward" ? 165 : 12;
+  const trend = (yEnd - yStart) / (n - 1);
+
+  const pts: { x: number; y: number }[] = [];
+  let y = yStart;
+  for (let i = 0; i < n; i++) {
+    pts.push({ x: (i / (n - 1)) * W, y: Math.max(5, Math.min(188, y)) });
+    y += trend + (rand() - 0.5) * vol * 2;
+  }
+
+  let stroke = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1], c = pts[i];
+    const cpx = ((p.x + c.x) / 2).toFixed(1);
+    stroke += ` C${cpx},${p.y.toFixed(1)} ${cpx},${c.y.toFixed(1)} ${c.x.toFixed(1)},${c.y.toFixed(1)}`;
+  }
+
+  return { stroke, fill: `${stroke} L${W},200 L0,200 Z` };
+}
+
+function formatDollar(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(2)}K`;
+  return `$${v.toFixed(2)}`;
+}
+
+const portfolioColors = ["#14532d","#22c55e","#86efac","#3b82f6","#10b981","#f59e0b","#8b5cf6","#ec4899"];
+
+const compactFormatter = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+function fmtCompact(value: number): string {
+  return `$${compactFormatter.format(value).replace("K", "k")}`;
+}
+
+function fmtFull(value: number): string {
+  return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+/* Tag → icon mapping for the pill row under the stats grid */
+function TagIcon({ tag }: { tag: string }) {
+  const t = tag.toLowerCase();
+  if (t.includes("trend")) return <TrendingUp className="w-3.5 h-3.5" />;
+  if (t.includes("rising") || t.includes("star") || t.includes("top")) return <Star className="w-3.5 h-3.5" />;
+  return <TrendingUp className="w-3.5 h-3.5" />;
+}
+
+/* Stats grid + tags — shared verbatim between the profile header and the
+   Portfolio tab, so both stay in sync automatically. */
+function TraderStatsAndTags({ trader }: { trader: TraderDetail }) {
+  return (
+    <>
+      <div className="rounded-2xl border border-blue-100 dark:border-[rgba(0,82,255,0.18)] bg-blue-50/40 dark:bg-[rgba(0,82,255,0.1)] px-2 py-3 sm:p-5">
+        <div className="grid grid-cols-3 gap-x-2 gap-y-5 sm:gap-x-8">
+          {[
+            { icon: <DollarSign className="w-4 h-4 text-blue-500 shrink-0" />, value: fmtFull(parseFloat(trader.min_account_threshold) || 0), label: "Min Capital" },
+            { icon: <Users className="w-4 h-4 text-purple-500 shrink-0" />, value: trader.copiers.toLocaleString(), label: "Copiers" },
+            { icon: <UserCheck className="w-4 h-4 text-blue-500 shrink-0" />, value: trader.followers.toLocaleString(), label: "Followers" },
+            { icon: <Shield className="w-4 h-4 text-amber-500 shrink-0" />, value: `${trader.profit_share ?? 50}%`, label: "Profit Share" },
+            { icon: <Briefcase className="w-4 h-4 text-blue-500 shrink-0" />, value: fmtCompact(parseFloat(trader.copy_value) || 0), label: "Copy value" },
+            { icon: <Gauge className="w-4 h-4 text-red-500 shrink-0" />, value: trader.risk, label: "Risk score" },
+          ].map((s, i) => (
+            <div key={i} className="flex flex-col items-center gap-1.5 text-center">
+              {s.icon}
+              <div>
+                <div className="text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap">{s.value}</div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400 whitespace-nowrap">{s.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {trader.tags && trader.tags.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-4">
+          {trader.tags.map((tag, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-full border border-blue-300 dark:border-[rgba(0,82,255,0.35)] text-blue-700 dark:text-[#0052ff]"
+            >
+              <TagIcon tag={tag} />
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function TraderProfilePageInner() {
+  const params = useParams();
+  const traderId = params.id;
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get("tab");
+
+  const [activeTab, setActiveTab] = useState<"overview" | "portfolio" | "history" | "copiers">(
+    initialTab === "portfolio" || initialTab === "history" || initialTab === "copiers" ? initialTab : "overview"
+  );
+  const [chartPeriod, setChartPeriod] = useState<TimeFilter>("Week");
+  const [isCopying, setIsCopying] = useState(false);
+  const [cancelRequested, setCancelRequested] = useState(false);
+  const [copyActionLoading, setCopyActionLoading] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const headerSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  const { theme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const copyStatusKey = traderId ? `/copy-trader/status/${traderId}/` : null;
+
+  const { data: profileData, isLoading: loadingBalance } = useSWR<UserProfile>(PROFILE_KEY);
+  const userBalance = profileData?.success ? parseFloat(profileData.user.balance) : 0;
+
+  const {
+    data: trader,
+    error: traderFetchError,
+    isLoading: loading,
+    mutate: refetchTrader,
+  } = useSWR<TraderDetail>(traderId ? `/traders/${traderId}/` : null);
+  const error = traderFetchError ? "Failed to load trader details. Please try again later." : null;
+
+  const { data: allTraders } = useSWR<SimilarTrader[]>("/traders/");
+  const similarTraders = useMemo(
+    () => (allTraders ?? []).filter((t) => t.id !== trader?.id).slice(0, 4),
+    [allTraders, trader?.id]
+  );
+
+  const { data: copyStatus } = useSWR<{ success: boolean; is_copying?: boolean; cancel_requested?: boolean }>(copyStatusKey);
+  useEffect(() => {
+    if (copyStatus?.success && copyStatus.is_copying) {
+      setIsCopying(true);
+      setCancelRequested(copyStatus.cancel_requested || false);
+    }
+  }, [copyStatus]);
+
+  // Collapse the floating Copy button into a compact "+" FAB once the profile
+  // header has scrolled out of view. The dashboard's scroll container is an
+  // inner <main overflow-y-auto>, not `window` — an IntersectionObserver on a
+  // sentinel sidesteps needing to know which ancestor actually scrolls.
+  useEffect(() => {
+    const el = headerSentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setScrolled(!entry.isIntersecting),
+      { threshold: 0 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [trader]);
+
+  const handleCopyTrader = async () => {
+    if (!trader) return;
+    const minThreshold = parseFloat(trader.min_account_threshold);
+    if (userBalance < minThreshold) {
+      toast.error("Insufficient Balance", {
+        description: `You need at least $${minThreshold.toLocaleString()} to copy ${trader.name}. Your balance: $${userBalance.toLocaleString()}`,
+      });
+      return;
+    }
+    setCopyActionLoading(true);
+    try {
+      const response = await apiFetch("/copy-trader/action/", {
+        method: "POST",
+        body: JSON.stringify({ trader_id: trader.id, action: "copy" }),
+      });
+      if (!response.ok) { const e = await response.json(); throw new Error(e.error || "Failed to copy trader"); }
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Failed to copy trader");
+      setIsCopying(true);
+      if (copyStatusKey) globalMutate(copyStatusKey);
+      toast.success("Copying Trader", { description: data.message || `You are now copying ${trader.name}` });
+    } catch (err) {
+      toast.error("Failed to Copy Trader", { description: err instanceof Error ? err.message : "An error occurred" });
+    } finally {
+      setCopyActionLoading(false);
+    }
+  };
+
+  const handleCancelCopy = async () => {
+    if (!trader) return;
+    setCopyActionLoading(true);
+    try {
+      const response = await apiFetch("/copy-trader/action/", {
+        method: "POST",
+        body: JSON.stringify({ trader_id: trader.id, action: "cancel" }),
+      });
+      if (!response.ok) { const e = await response.json(); throw new Error(e.error || "Failed to request cancel"); }
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || "Failed to request cancel");
+      setCancelRequested(true);
+      if (copyStatusKey) globalMutate(copyStatusKey);
+      toast.info("Cancel Request Sent", { description: data.message || "Your cancel request has been sent to admin" });
+    } catch (err) {
+      toast.error("Failed to Request Cancel", { description: err instanceof Error ? err.message : "An error occurred" });
+    } finally {
+      setCopyActionLoading(false);
+    }
+  };
+
+  const isLight = mounted ? resolvedTheme === "light" || theme === "light" : false;
+  const getAvatarUrl = (avatarUrl: string | null, name: string): string =>
+    avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&size=128`;
+
+  const chartDirection: "upward" | "downward" = trader?.trend_direction === "downward" ? "downward" : "upward";
+  const chartColor = chartDirection === "downward" ? "#ef4444" : "#0052ff";
+
+  const chartSeed = useMemo(() => {
+    if (!trader) return 42;
+    return Math.abs(Math.round(parseFloat(trader.cumulative_earnings_copiers))) || 42;
+  }, [trader]);
+
+  const { stroke: chartStroke, fill: chartFill } = useMemo(
+    () => generateChartPath(chartPeriod, chartSeed, chartDirection),
+    [chartPeriod, chartSeed, chartDirection]
+  );
+
+  const displayValue = useMemo(() => {
+    if (!trader) return "$0.00";
+    const div = PERIOD_DIVISOR[chartPeriod] ?? 1;
+    return formatDollar(parseFloat(trader.cumulative_earnings_copiers) / div);
+  }, [trader, chartPeriod]);
+
+  const displayRoi = useMemo(() => {
+    if (!trader) return "+0.00%";
+    const div = PERIOD_DIVISOR[chartPeriod] ?? 1;
+    const pct = parseFloat(trader.gain) / div;
+    return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+  }, [trader, chartPeriod]);
+
+  const chartXLabels = PERIOD_LABELS[chartPeriod] ?? [];
+  const chartPeriodDesc = PERIOD_DESC[chartPeriod] ?? "Last 90 days";
+
+  const getRiskLabel = (risk: number) => {
+    if (risk <= 3) return "Conservative";
+    if (risk <= 6) return "Swing trader";
+    return "Aggressive";
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex justify-center items-center">
+        <PulseLoader color="#0052ff" size={15} />
+      </div>
+    );
+  }
+
+  if (error || !trader) {
+    return (
+      <div className="min-h-screen flex flex-col justify-center items-center gap-4">
+        <p className="text-red-500 text-lg">{error || "Trader not found"}</p>
+        <div className="flex gap-4">
+          <button
+            onClick={() => refetchTrader()}
+            className="px-6 py-2 rounded-lg hover:opacity-90 transition-opacity"
+            style={{ background: "#0046d9", color: "#ffffff" }}
+          >
+            Retry
+          </button>
+          <Link
+            href="/explore-traders"
+            className="px-6 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-lg transition-colors"
+          >
+            Back to Experts
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const minThreshold = parseFloat(trader.min_account_threshold);
+  const totalPortfolio = trader.portfolio_breakdown?.reduce((sum, item) => sum + item.percentage, 0) || 100;
+
+  return (
+    <div className="min-h-screen">
+      <div className="max-w-7xl mx-auto py-6">
+        {/* Back */}
+        <Link
+          href="/explore-traders"
+          className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 mb-6 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Experts
+        </Link>
+
+        {/* Profile Header */}
+        <div className="tv-card rounded-2xl p-3 sm:p-8 mb-6">
+          {/* Top row: avatar + name/username on the left, flag spaced to the right */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="relative shrink-0">
+                <Image
+                  src={getAvatarUrl(trader.avatar_url, trader.name)}
+                  alt={trader.name}
+                  width={96}
+                  height={96}
+                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-4 border-blue-100 dark:border-blue-900/30"
+                  unoptimized
+                />
+                {trader.badge === "gold" && (
+                  <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-yellow-400 rounded-full flex items-center justify-center shadow-md border-2 border-white dark:border-[#0a1733]">
+                    <span className="text-[11px]">&#x1F451;</span>
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-white truncate">{trader.name}</h1>
+                <p className="text-gray-500 dark:text-gray-400 text-sm truncate">@{trader.username}</p>
+              </div>
+            </div>
+
+            {trader.country_flag_url && (
+              <Image
+                src={trader.country_flag_url}
+                alt={trader.country}
+                width={44}
+                height={44}
+                className="rounded-full object-cover shadow-sm border border-gray-200/50 dark:border-white/10 h-9 w-9 sm:h-10 sm:w-10 shrink-0"
+                unoptimized
+              />
+            )}
+          </div>
+
+          {trader.bio && (
+            <p className="text-gray-600 dark:text-gray-400 text-sm mt-4 leading-relaxed">{trader.bio}</p>
+          )}
+
+          {/* Stats grid + tags — shared with the Portfolio tab via TraderStatsAndTags */}
+          <div className="mt-5">
+            <TraderStatsAndTags trader={trader} />
+          </div>
+
+          {/* Copying status — shown inline once the user has started copying */}
+          {isCopying && (
+            <div className="flex items-center gap-2 mt-4">
+              {cancelRequested ? (
+                <span className="px-4 py-2 bg-orange-100 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 rounded-xl text-sm font-semibold flex items-center gap-1.5">
+                  <Clock className="w-4 h-4" />
+                  Cancel Requested
+                </span>
+              ) : (
+                <>
+                  <span className="px-4 py-2 bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded-xl text-sm font-semibold flex items-center gap-1.5">
+                    <UserCheck className="w-4 h-4" />
+                    Copying
+                  </span>
+                  <button
+                    onClick={handleCancelCopy}
+                    disabled={copyActionLoading}
+                    className={`px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl text-sm font-medium transition-all flex items-center gap-1.5 ${copyActionLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                  >
+                    <X className="w-4 h-4" />
+                    {copyActionLoading ? "..." : "Stop"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Sentinel for the floating Copy button's scroll-collapse behaviour */}
+        <div ref={headerSentinelRef} aria-hidden className="h-px w-full" />
+
+        {/* Tabs */}
+        <div className="flex gap-6 sm:gap-8 border-b border-[rgba(0,82,255,0.2)] mb-6 overflow-x-auto scrollbar-hide">
+          {[
+            { id: "overview", label: "Overview" },
+            { id: "portfolio", label: "Portfolio" },
+            { id: "history", label: "Trade History" },
+            { id: "copiers", label: "Copiers" },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id as "overview" | "portfolio" | "history" | "copiers")}
+              className={`pb-3 text-sm font-medium whitespace-nowrap transition-all relative ${
+                activeTab === t.id
+                  ? "text-blue-600"
+                  : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+              }`}
+            >
+              {t.label}
+              {activeTab === t.id && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── OVERVIEW ── */}
+        {activeTab === "overview" && (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Chart — ported from hagocapitals' trader detail "Portfolio" chart */}
+              <div className="lg:col-span-2 tv-card rounded-2xl p-5 sm:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-1">
+                  <div className="flex items-center gap-2 text-[12px] text-gray-400 dark:text-gray-500">
+                    <span className="font-medium text-gray-900 dark:text-white">Portfolio</span>
+                    <span>|</span>
+                    <span>{chartPeriodDesc}</span>
+                  </div>
+                  <div className="flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none]">
+                    {TIME_FILTERS.map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setChartPeriod(f)}
+                        className={`h-6 px-2 rounded-full text-[11px] font-medium transition-colors ${
+                          chartPeriod === f
+                            ? "bg-[#0046d9] text-white"
+                            : "text-gray-400 dark:text-gray-500 hover:text-gray-900 dark:hover:text-white"
+                        }`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-baseline gap-2 mb-4">
+                  <span className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white leading-none">
+                    {displayValue}
+                  </span>
+                  <span className={`text-[13px] font-semibold flex items-center gap-0.5 ${chartDirection === "downward" ? "text-red-500" : "text-[#0052ff]"}`}>
+                    {displayRoi}
+                    {chartDirection === "downward" ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                  </span>
+                </div>
+
+                <div className="w-full overflow-hidden">
+                  <svg viewBox="0 0 580 200" preserveAspectRatio="none" className="w-full h-[180px] sm:h-[220px]">
+                    <defs>
+                      <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={chartColor} stopOpacity="0.25" />
+                        <stop offset="100%" stopColor={chartColor} stopOpacity="0.02" />
+                      </linearGradient>
+                    </defs>
+                    <path d={chartFill} fill="url(#chartFill)" />
+                    <path d={chartStroke} fill="none" stroke={chartColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+
+                <div className="flex justify-between mt-2 px-1">
+                  {chartXLabels.map((label, i) => (
+                    <span
+                      key={label}
+                      className={`text-[10px] text-gray-400 dark:text-gray-500 ${chartXLabels.length > 8 && i % 2 !== 0 ? "hidden sm:inline" : ""}`}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Profile Data Sidebar */}
+              <div className="tv-card rounded-2xl p-5 sm:p-6">
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white mb-6">Profile data</h2>
+                <div className="space-y-0">
+                  {[
+                    { label: "Master's P/L", value: `${parseFloat(trader.gain) >= 0 ? "+" : ""}${trader.gain}`, isGain: true, showTrend: true },
+                    { label: "Minimum Capital", value: `$${parseFloat(trader.min_account_threshold).toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+                    { label: "Max. Drawdown", value: `${trader.max_drawdown}%`, isRed: parseFloat(trader.max_drawdown) > 0 },
+                    { label: "Risk", value: getRiskLabel(trader.risk), isBold: true },
+                    { label: "Cum. Earnings of Copiers", value: `+${parseFloat(trader.cumulative_earnings_copiers).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, isGain: true, showTrend: true },
+                    { label: "Cum. Copiers", value: trader.cumulative_copiers.toLocaleString(), isBold: true },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-center justify-between py-4 border-b border-gray-100 dark:border-[rgba(0,82,255,0.08)] last:border-0">
+                      <span className="text-sm text-gray-500 dark:text-gray-400">{item.label}</span>
+                      <span className={`text-sm font-bold flex items-center gap-1 ${item.isGain ? "text-emerald-500" : item.isRed ? "text-red-500" : "text-gray-900 dark:text-white"}`}>
+                        {item.value}
+                        {item.showTrend && (
+                          <svg width="16" height="10" viewBox="0 0 16 10" fill="none">
+                            <path d="M1,8 L4,6 L8,7 L12,3 L15,1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                          </svg>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Top Traded */}
+              <div className="lg:col-span-2 tv-card rounded-2xl p-5 sm:p-6">
+                <h2 className="text-base font-bold text-gray-900 dark:text-white mb-4">Top traded</h2>
+                {trader.top_traded && trader.top_traded.length > 0 ? (
+                  <div className="overflow-x-auto -mx-5 sm:-mx-6 px-5 sm:px-6">
+                    <table className="w-full min-w-[500px]">
+                      <thead>
+                        <tr className="border-b border-gray-100 dark:border-[rgba(0,82,255,0.08)]">
+                          {["Asset", "Avg profit", "Avg Loss", "Profitable"].map((h) => (
+                            <th key={h} className="text-left pb-3 text-xs font-medium text-gray-500 dark:text-gray-400">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trader.top_traded.map((asset, i) => (
+                          <tr key={i} className="border-b border-gray-50 dark:border-[rgba(0,82,255,0.05)] last:border-0">
+                            <td className="py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-blue-900 dark:bg-[#040b1f] flex items-center justify-center shrink-0">
+                                  <span className="text-white text-sm font-bold">{asset.ticker?.charAt(0) || asset.name.charAt(0)}</span>
+                                </div>
+                                <div>
+                                  <div className="text-sm font-semibold text-gray-900 dark:text-white">{asset.name}</div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400">{asset.ticker}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-4"><span className="text-sm font-semibold text-emerald-500">{asset.avg_profit}%</span><div className="text-[10px] text-gray-400">Avg profit</div></td>
+                            <td className="py-4"><span className="text-sm font-semibold text-red-500">-{Math.abs(asset.avg_loss)}%</span><div className="text-[10px] text-gray-400">Avg Loss</div></td>
+                            <td className="py-4"><span className="text-sm font-semibold text-emerald-500">{asset.profitable_pct}%</span><div className="text-[10px] text-gray-400">Profitable</div></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-10 text-gray-400 dark:text-gray-500">
+                    <Info className="w-10 h-10 mb-2 opacity-50" />
+                    <p className="text-sm">No top traded data available</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Portfolio Breakdown */}
+              <div className="tv-card rounded-2xl p-5 sm:p-6">
+                <h2 className="text-base font-bold text-gray-900 dark:text-white mb-5">Profile breakdown</h2>
+                {trader.portfolio_breakdown && trader.portfolio_breakdown.length > 0 ? (
+                  <>
+                    <div className="flex rounded-lg overflow-hidden h-8 mb-6">
+                      {trader.portfolio_breakdown.map((item, i) => (
+                        <div key={i} style={{ width: `${(item.percentage / totalPortfolio) * 100}%`, backgroundColor: portfolioColors[i % portfolioColors.length] }} className="transition-all" />
+                      ))}
+                    </div>
+                    <div className="space-y-3">
+                      {trader.portfolio_breakdown.map((item, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: portfolioColors[i % portfolioColors.length] }} />
+                            <span className="text-sm text-gray-600 dark:text-gray-400">{item.name}</span>
+                          </div>
+                          <span className="text-sm font-bold text-gray-900 dark:text-white">{item.percentage}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-10 text-gray-400 dark:text-gray-500">
+                    <Info className="w-10 h-10 mb-2 opacity-50" />
+                    <p className="text-sm">No portfolio data available</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Similar Traders */}
+            {similarTraders.length > 0 && (
+              <div className="mt-10">
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-1">Similar traders</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Investors that trade just like {trader.username}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {similarTraders.map((st) => (
+                    <Link key={st.id} href={`/explore-traders/${st.id}`} className="group tv-card rounded-xl p-4 hover:shadow-lg hover:border-[#0052ff] transition-all">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-10 h-10 rounded-full overflow-hidden bg-blue-600 shrink-0">
+                          {st.avatar_url ? (
+                            <Image src={st.avatar_url} width={40} height={40} alt={st.name} className="w-full h-full object-cover" unoptimized />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-white font-bold text-sm">{st.name.charAt(0)}</div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate">{st.name}</h3>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{st.username}</p>
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <div><span className="font-bold text-gray-900 dark:text-white">{parseFloat(st.gain).toFixed(2)}%</span><p className="text-[10px] text-gray-400">Profit (1M)</p></div>
+                        <div className="text-right"><span className="font-bold text-gray-900 dark:text-white">{st.copiers.toLocaleString()}</span><p className="text-[10px] text-gray-400">Copiers</p></div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── PORTFOLIO TAB ──
+            Blurred while the server reports it locked (trader.blur_portfolio on and the
+            user hasn't unlocked it); unlocking needs a balance >= blur_portfolio_amount. */}
+        {activeTab === "portfolio" && (
+          <TraderPortfolioTab traderId={trader.id} traderName={trader.name} />
+        )}
+
+        {/* ── HISTORY TAB ──
+            Trading Statistics + Frequently Traded Assets, followed by the
+            Win Rate / Performance / About cards that used to live under
+            the Portfolio tab. */}
+        {activeTab === "history" && (
+          <div className="flex flex-col gap-6">
+            <div className="tv-card rounded-2xl p-6">
+              <h2 className="text-base font-bold text-gray-900 dark:text-white mb-4">Trading Statistics</h2>
+              <div className="space-y-6">
+                <div className="flex flex-wrap gap-6">
+                  <div className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-emerald-500" /><span className="text-sm text-emerald-500 font-semibold">+{trader.avg_profit_percent}% Avg. Profit</span></div>
+                  <div className="flex items-center gap-2"><TrendingDown className="w-4 h-4 text-red-500" /><span className="text-sm text-red-500 font-semibold">{trader.avg_loss_percent}% Avg. Loss</span></div>
+                </div>
+                <div className="pt-6 border-t border-gray-100 dark:border-[rgba(0,82,255,0.08)]">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4">Frequently Traded Assets</h3>
+                  {trader.frequently_traded.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-gray-400 dark:text-gray-500">
+                      <Info className="w-10 h-10 mb-2 opacity-50" />
+                      <p className="text-sm">No records found</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {trader.frequently_traded.map((asset, index) => (
+                        <span key={index} className="px-4 py-2 bg-blue-50 dark:bg-blue-500/10 text-blue-600 text-sm rounded-xl font-medium border border-blue-100 dark:border-blue-500/20">
+                          {asset}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Win Rate */}
+              <div className="tv-card rounded-2xl p-6">
+                <h2 className="text-base font-bold text-gray-900 dark:text-white mb-6">Win Rate</h2>
+                <div className="flex items-center justify-center mb-6">
+                  <div className="relative w-40 h-40">
+                    <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                      <circle cx="50" cy="50" r="40" fill="none" stroke={isLight ? "#f1f5f9" : "#102a5c"} strokeWidth="8" />
+                      <circle cx="50" cy="50" r="40" fill="none" stroke="#22c55e" strokeWidth="8" strokeDasharray={`${(trader.win_rate / 100) * 251.2} 251.2`} strokeLinecap="round" />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-2xl font-bold text-gray-900 dark:text-white">{trader.win_rate.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="text-center p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl">
+                    <div className="text-lg font-bold text-emerald-500">{trader.total_wins}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Total Wins</div>
+                  </div>
+                  <div className="text-center p-3 bg-red-50 dark:bg-red-500/10 rounded-xl">
+                    <div className="text-lg font-bold text-red-500">{trader.total_losses}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Total Losses</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Performance */}
+              <div className="tv-card rounded-2xl p-6">
+                <h2 className="text-base font-bold text-gray-900 dark:text-white mb-6">Performance</h2>
+                <div className="space-y-0">
+                  {[
+                    { label: "Return YTD", value: `${trader.return_ytd}%`, color: parseFloat(trader.return_ytd) >= 0 ? "text-emerald-500" : "text-red-500" },
+                    { label: "Return 2Y", value: `${trader.return_2y}%`, color: parseFloat(trader.return_2y) >= 0 ? "text-emerald-500" : "text-red-500" },
+                    { label: "Avg Score (7D)", value: trader.avg_score_7d, color: "text-gray-900 dark:text-white" },
+                    { label: "Profitable Weeks", value: `${trader.profitable_weeks}%`, color: "text-emerald-500" },
+                    { label: "Avg. Profit", value: `+${trader.avg_profit_percent}%`, color: "text-emerald-500" },
+                    { label: "Avg. Loss", value: `${trader.avg_loss_percent}%`, color: "text-red-500" },
+                  ].map((item) => (
+                    <div key={item.label} className="flex justify-between items-center py-3 border-b border-gray-100 dark:border-[rgba(0,82,255,0.08)] last:border-0">
+                      <span className="text-sm text-gray-500 dark:text-gray-400">{item.label}</span>
+                      <span className={`text-sm font-bold ${item.color}`}>{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* About */}
+              <div className="lg:col-span-2 tv-card rounded-2xl p-6">
+                <h2 className="text-base font-bold text-gray-900 dark:text-white mb-4">About {trader.name}</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
+                  {[
+                    { value: trader.subscribers.toLocaleString(), label: "Subscribers" },
+                    { value: trader.current_positions, label: "Open Positions" },
+                    { value: trader.avg_trade_time, label: "Avg. Trade Time" },
+                  ].map((s, i) => (
+                    <div key={i} className="text-center">
+                      <div className="text-lg font-bold text-gray-900 dark:text-white">{s.value}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{s.label}</div>
+                    </div>
+                  ))}
+                  <div className="text-center">
+                    <div className="flex items-center justify-center gap-0.5">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <span key={star} className="text-lg">{star <= Math.floor(parseFloat(trader.expert_rating)) ? "⭐" : "☆"}</span>
+                      ))}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Rating ({trader.expert_rating}/5)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── COPIERS TAB ── */}
+        {activeTab === "copiers" && (
+          <div className="tv-card rounded-2xl p-6">
+            <h2 className="text-base font-bold text-gray-900 dark:text-white mb-6">Copier Statistics</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
+              <div className="text-center p-6 bg-blue-50 dark:bg-blue-500/10 rounded-2xl">
+                <Users className="w-8 h-8 text-blue-500 mx-auto mb-3" />
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">{trader.copiers.toLocaleString()}</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">Active Copiers</div>
+              </div>
+              <div className="text-center p-6 bg-purple-50 dark:bg-purple-500/10 rounded-2xl">
+                <Shield className="w-8 h-8 text-purple-500 mx-auto mb-3" />
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">{trader.cumulative_copiers.toLocaleString()}</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">All-time Copiers</div>
+              </div>
+              <div className="text-center p-6 bg-emerald-50 dark:bg-emerald-500/10 rounded-2xl">
+                <DollarSign className="w-8 h-8 text-emerald-500 mx-auto mb-3" />
+                <div className="text-2xl font-bold text-emerald-500">${parseFloat(trader.cumulative_earnings_copiers).toLocaleString()}</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">Total Copier Earnings</div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Floating Copy button — a wide pill near the top of the page,
+          collapsing into a compact "+" FAB once scrolled. Only shown while
+          the user isn't already copying; the inline status row above covers
+          "Copying"/"Cancel Requested"/"Stop" once they are. */}
+      {!isCopying && (
+        <button
+          onClick={handleCopyTrader}
+          disabled={loadingBalance || copyActionLoading}
+          aria-label="Copy Trader"
+          title="Copy Trader"
+          className={`fixed z-40 bottom-20 lg:bottom-8 right-5 sm:right-8 flex items-center justify-center rounded-full overflow-hidden font-semibold text-sm shadow-lg shadow-black/15 dark:shadow-black/50 ring-1 ring-black/5 dark:ring-white/10 transition-all duration-700 ease-in-out ${
+            scrolled ? "w-[52px] h-[52px] p-0 gap-0" : "gap-2 pl-4 pr-5 py-3.5"
+          } ${
+            loadingBalance || copyActionLoading
+              ? "opacity-60 cursor-not-allowed"
+              : "hover:opacity-90 hover:scale-[1.03] active:scale-95"
+          }`}
+          style={{ background: "#0046d9", color: "#ffffff" }}
+        >
+          {copyActionLoading || loadingBalance ? (
+            <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+          ) : (
+            <>
+              {/* Icon: UserPlus and Plus cross-fade in place over the same
+                  duration as the pill/circle shape change, instead of
+                  snapping instantly. */}
+              <span className="relative w-5 h-5 shrink-0 grid place-items-center">
+                <UserPlus
+                  className={`w-4 h-4 absolute transition-opacity duration-700 ease-in-out ${scrolled ? "opacity-0" : "opacity-100"}`}
+                />
+                <Plus
+                  className={`w-5 h-5 absolute transition-opacity duration-700 ease-in-out ${scrolled ? "opacity-100" : "opacity-0"}`}
+                  strokeWidth={2.5}
+                />
+              </span>
+              <span
+                className={`overflow-hidden whitespace-nowrap transition-all duration-700 ease-in-out ${
+                  scrolled ? "max-w-0 opacity-0" : "max-w-30 opacity-100"
+                }`}
+              >
+                Copy Trader
+              </span>
+            </>
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export default function TraderProfilePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen" />}>
+      <TraderProfilePageInner />
+    </Suspense>
+  );
+}
