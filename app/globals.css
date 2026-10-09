@@ -828,6 +828,33 @@ a:focus-visible {
   color: #ffffff;
 }
 
+/* ══════════════ LANDING PAGE (newlanding) ══════════════ */
+
+/* Landing page grid accent — desktop only, fades in from the right so text is never affected */
+@media (min-width: 1024px) {
+  .landing-grid-bg {
+    background-image:
+      linear-gradient(to right, #ffffff 45%, rgba(255, 255, 255, 0.55) 100%),
+      url('/sample-landing/grid-right2.webp');
+    background-position: left top, right top;
+    background-repeat: no-repeat, repeat-y;
+    background-size: 100% 100%, 140px auto;
+  }
+}
+
+/* Scrolling strip animation for the landing page payment-methods strip */
+@keyframes scroll-strip {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.animate-scroll-strip {
+  animation: scroll-strip 20s linear infinite;
+  width: 200%;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

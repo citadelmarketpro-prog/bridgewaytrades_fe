@@ -1,18 +1,23 @@
 import type { Metadata } from "next";
-import CTASection from "@/components/site/CTASection";
-import FAQSection from "@/components/site/Faqsection";
-import FeaturesSection from "@/components/site/FeaturesSection";
-import Footer from "@/components/site/Footer";
-import HeroSection from "@/components/site/HeroSection";
-import HowItWorks from "@/components/site/HowItWorks";
-import LiquidityProvidersSection from "@/components/site/LiquidityProvidersSection";
 import Navbar from "@/components/site/Navbar";
-import StatsSection from "@/components/site/StatsSection";
-// import TeamSection from "@/components/site/TeamSection";
-import TradersSection from "@/components/site/TradersSecion";
-import TrustSection from "@/components/site/TrustSection";
-import WhatYouCanCopy from "@/components/site/WhatYouCanCopy";
-import WhyChooseUs from "@/components/site/WhyChooseUs";
+import Footer from "@/components/site/Footer";
+import LiquidityProvidersSection from "@/components/site/LiquidityProvidersSection";
+import HeroSection from "@/components/newlanding/HeroSection";
+import PlatformSection from "@/components/newlanding/PlatformSection";
+import AboutSection from "@/components/newlanding/AboutSection";
+import StatsSection from "@/components/newlanding/StatsSection";
+import TrustedSection from "@/components/newlanding/TrustedSection";
+import FeaturesSection from "@/components/newlanding/FeaturesSection";
+import StockDerivativesSection from "@/components/newlanding/StockDerivativesSection";
+import MirrorTradingSection from "@/components/newlanding/MirrorTradingSection";
+import ForexSection from "@/components/newlanding/ForexSection";
+import WhyCopyTradingSection from "@/components/newlanding/WhyCopyTradingSection";
+import StocksSection from "@/components/newlanding/StocksSection";
+import FindYourselfSection from "@/components/newlanding/FindYourselfSection";
+import PayLessSection from "@/components/newlanding/PayLessSection";
+import TradingFingertipsSection from "@/components/newlanding/TradingFingertipsSection";
+import BecomeProSection from "@/components/newlanding/BecomeProSection";
+import LandingExtrasSection from "@/components/newlanding/LandingExtrasSection";
 import PagePreloader from "@/components/PagePreloader";
 
 export const metadata: Metadata = {
@@ -118,18 +123,23 @@ export default function Home() {
         }}
       />
       <Navbar />
-      <main className="pt-16 lg:pt-20">
+      <main className="pt-16 lg:pt-20 font-sans bg-white landing-grid-bg">
         <HeroSection />
+        <PlatformSection />
+        <AboutSection />
         <StatsSection />
-        <HowItWorks />
-        <WhyChooseUs />
-        <TradersSection />
+        <TrustedSection />
         <FeaturesSection />
-        <WhatYouCanCopy />
-        <FAQSection />
-        {/* <TeamSection /> */}
-        <TrustSection />
-        <CTASection />
+        <StockDerivativesSection />
+        <MirrorTradingSection />
+        <ForexSection />
+        <WhyCopyTradingSection />
+        <StocksSection />
+        <FindYourselfSection />
+        <PayLessSection />
+        <TradingFingertipsSection />
+        <BecomeProSection />
+        <LandingExtrasSection />
         <LiquidityProvidersSection />
         <Footer />
       </main>
